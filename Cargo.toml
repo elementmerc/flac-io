@@ -1,0 +1,20 @@
+[package]
+name = "flac-io"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.74"
+description = "Pure-Rust FLAC decoder and encoder for reading and writing lossless audio samples"
+documentation = "https://docs.rs/flac-io"
+readme = "README.md"
+keywords = ["flac", "audio", "lossless", "codec", "steganography"]
+categories = ["multimedia::audio", "encoding", "parser-implementations"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/elementmerc/flac-io"
+
+[lib]
+name = "flac_io"
+path = "src/lib.rs"
+
+[[example]]
+name = "smoke"
+path = "examples/smoke.rs"

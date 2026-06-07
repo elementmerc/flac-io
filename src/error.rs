@@ -1,0 +1,46 @@
+// The public error type for the crate.
+
+use std::fmt;
+
+/// Errors returned when decoding or encoding a FLAC stream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FlacError {
+    /// The input does not begin with the `fLaC` stream marker.
+    NotFlac,
+
+    /// The stream ended in the middle of a field that was still being read.
+    Truncated,
+
+    /// A structural value in the stream is impossible or out of range (an
+    /// unknown subframe type, a reserved code, a partition order that does
+    /// not divide the block, and so on). The string names the specific fault.
+    CorruptStream(String),
+
+    /// The stream uses a feature this crate does not implement (for example a
+    /// reserved sample-rate or bit-depth code, or Ogg encapsulation).
+    Unsupported(String),
+
+    /// A computed CRC did not match the value stored in the stream, so the
+    /// data is damaged.
+    CrcMismatch,
+
+    /// The samples handed to the encoder are inconsistent (channel lengths
+    /// differ, bit depth out of range, no channels, and so on). The string
+    /// names the specific fault.
+    InvalidInput(String),
+}
+
+impl fmt::Display for FlacError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FlacError::NotFlac => write!(f, "input is not a FLAC stream (missing fLaC marker)"),
+            FlacError::Truncated => write!(f, "FLAC stream ended unexpectedly"),
+            FlacError::CorruptStream(why) => write!(f, "corrupt FLAC stream: {why}"),
+            FlacError::Unsupported(what) => write!(f, "unsupported FLAC feature: {what}"),
+            FlacError::CrcMismatch => write!(f, "FLAC CRC check failed; the data is damaged"),
+            FlacError::InvalidInput(why) => write!(f, "invalid input to the FLAC encoder: {why}"),
+        }
+    }
+}
+
+impl std::error::Error for FlacError {}
