@@ -67,6 +67,21 @@ impl FlacAudio {
     }
 }
 
+/// Read just the stream metadata (sample rate, channels, bit depth, total
+/// samples, MD5) without decoding any audio.
+///
+/// This parses only the `fLaC` marker and the metadata blocks, so it is cheap
+/// even for a large file. Use it when you need the format of a stream but not
+/// its samples.
+///
+/// # Errors
+///
+/// Returns [`FlacError`] if the input is not FLAC, is truncated, or its
+/// STREAMINFO block is corrupt.
+pub fn info(bytes: &[u8]) -> Result<StreamInfo, FlacError> {
+    metadata::read_header(bytes).map(|h| h.stream_info)
+}
+
 /// Decode a FLAC byte stream into its samples and parameters.
 ///
 /// # Errors

@@ -41,3 +41,19 @@ fn stereo24_decodes() {
 fn not_flac_rejected() {
     assert!(flac_io::decode(b"not a flac file at all").is_err());
 }
+
+#[test]
+fn info_reads_metadata_without_decoding() {
+    let si = flac_io::info(&fixture("stereo24.flac")).expect("info");
+    assert_eq!(si.channels, 2);
+    assert_eq!(si.bits_per_sample, 24);
+    assert_eq!(si.sample_rate, 48000);
+    assert!(si.total_samples > 0);
+    // The stored MD5 is non-zero for a reference-encoded file.
+    assert_ne!(si.md5, [0u8; 16]);
+}
+
+#[test]
+fn info_rejects_non_flac() {
+    assert!(flac_io::info(b"RIFFxxxxWAVE").is_err());
+}
