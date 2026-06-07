@@ -62,7 +62,10 @@ pub fn read_header(bytes: &[u8]) -> Result<Header, FlacError> {
             | ((bytes[pos + 2] as usize) << 8)
             | bytes[pos + 3] as usize;
         pos += 4;
-        if pos + length > bytes.len() {
+        // checked_add so a crafted length near usize::MAX cannot wrap past the
+        // bounds test and trigger an out-of-range slice.
+        let end = pos.checked_add(length).ok_or(FlacError::Truncated)?;
+        if end > bytes.len() {
             return Err(FlacError::Truncated);
         }
 

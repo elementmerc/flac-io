@@ -328,20 +328,32 @@ fn decode_fixed(
 }
 
 fn restore_fixed(samples: &mut Vec<i64>, residual: &[i64], order: usize) {
+    // Wrapping arithmetic throughout: on a valid stream the values fit and
+    // wrapping is identical to ordinary arithmetic, but a corrupt stream can
+    // drive this integrator past i64, and a parser of untrusted data must wrap
+    // rather than panic. The STREAMINFO MD5 check rejects any such result.
     for (i, &r) in residual.iter().enumerate() {
         let idx = order + i;
+        // Each arm only indexes the `order` samples behind it, so order 0
+        // never reads `samples[idx - 1]`.
         let pred: i64 = match order {
             0 => 0,
             1 => samples[idx - 1],
-            2 => 2 * samples[idx - 1] - samples[idx - 2],
-            3 => 3 * samples[idx - 1] - 3 * samples[idx - 2] + samples[idx - 3],
-            4 => {
-                4 * samples[idx - 1] - 6 * samples[idx - 2] + 4 * samples[idx - 3]
-                    - samples[idx - 4]
-            }
+            2 => 2i64
+                .wrapping_mul(samples[idx - 1])
+                .wrapping_sub(samples[idx - 2]),
+            3 => 3i64
+                .wrapping_mul(samples[idx - 1])
+                .wrapping_sub(3i64.wrapping_mul(samples[idx - 2]))
+                .wrapping_add(samples[idx - 3]),
+            4 => 4i64
+                .wrapping_mul(samples[idx - 1])
+                .wrapping_sub(6i64.wrapping_mul(samples[idx - 2]))
+                .wrapping_add(4i64.wrapping_mul(samples[idx - 3]))
+                .wrapping_sub(samples[idx - 4]),
             _ => unreachable!("fixed order is 0..=4"),
         };
-        samples.push(r + pred);
+        samples.push(r.wrapping_add(pred));
     }
 }
 
@@ -382,11 +394,13 @@ fn decode_lpc(
     let residual = read_residual(reader, block_size, order)?;
     for (i, &r) in residual.iter().enumerate() {
         let idx = order + i;
+        // Wrapping accumulation so a corrupt stream cannot panic on overflow
+        // (see the note in `restore_fixed`).
         let mut pred: i64 = 0;
         for (j, &c) in coeffs.iter().enumerate() {
-            pred += c * samples[idx - 1 - j];
+            pred = pred.wrapping_add(c.wrapping_mul(samples[idx - 1 - j]));
         }
-        samples.push(r + (pred >> shift));
+        samples.push(r.wrapping_add(pred >> shift));
     }
     Ok(samples.into_iter().map(|s| s as i32).collect())
 }
@@ -422,10 +436,6 @@ fn read_residual(
         ));
     }
     let partition_len = block_size / partitions;
-    if partition_len <= order && partitions == 1 {
-        // The single-partition first slice would have no samples.
-        // (Only an issue when order >= the whole block.)
-    }
 
     let mut residual: Vec<i64> = Vec::with_capacity(block_size - order);
     for p in 0..partitions {

@@ -1,6 +1,6 @@
 # flac-io
 
-A pure-Rust FLAC decoder and encoder with no unsafe code and no C dependency.
+A pure-Rust FLAC decoder and encoder.
 
 FLAC (Free Lossless Audio Codec) stores audio so that decoding gives back the
 exact original samples, bit for bit. This crate reads a FLAC byte stream into
