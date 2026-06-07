@@ -32,6 +32,7 @@
 //! 0 is the left channel and index 1 is the right.
 
 mod bitstream;
+mod bitwriter;
 mod crc;
 mod decoder;
 mod encoder;
