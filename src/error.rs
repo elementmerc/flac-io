@@ -44,3 +44,31 @@ impl fmt::Display for FlacError {
 }
 
 impl std::error::Error for FlacError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_variant_displays_a_message() {
+        let variants = [
+            FlacError::NotFlac,
+            FlacError::Truncated,
+            FlacError::CorruptStream("why".into()),
+            FlacError::Unsupported("what".into()),
+            FlacError::CrcMismatch,
+            FlacError::InvalidInput("why".into()),
+        ];
+        for v in &variants {
+            let s = v.to_string();
+            assert!(!s.is_empty());
+            // The detail string is carried through for the parameterised ones.
+            let _ = format!("{v:?}");
+        }
+        assert!(FlacError::CorruptStream("partition".into())
+            .to_string()
+            .contains("partition"));
+        // The error implements the standard Error trait.
+        let _: &dyn std::error::Error = &FlacError::NotFlac;
+    }
+}

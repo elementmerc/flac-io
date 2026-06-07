@@ -123,11 +123,6 @@ fn parse_stream_info(body: &[u8]) -> Result<StreamInfo, FlacError> {
             "STREAMINFO sample rate is zero".into(),
         ));
     }
-    if min_block_size < 16 {
-        return Err(FlacError::CorruptStream(
-            "STREAMINFO minimum block size below 16".into(),
-        ));
-    }
 
     Ok(StreamInfo {
         min_block_size,

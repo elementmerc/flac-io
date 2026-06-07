@@ -32,6 +32,7 @@ enum ChannelAssignment {
 }
 
 /// The decoded fields of a frame header that the subframe decoder needs.
+#[derive(Debug)]
 struct FrameHeader {
     block_size: u32,
     channel_assignment: ChannelAssignment,
@@ -584,5 +585,237 @@ mod tests {
         undo_channel_decorrelation(ChannelAssignment::RightSide, &mut channels);
         assert_eq!(channels[0][0], 100);
         assert_eq!(channels[1][0], 40);
+    }
+
+    // ── Crafted-stream error-branch coverage ──────────────────────────────
+    use crate::bitwriter::BitWriter;
+
+    fn dummy_stream_info() -> StreamInfo {
+        StreamInfo {
+            min_block_size: 16,
+            max_block_size: 4096,
+            min_frame_size: 0,
+            max_frame_size: 0,
+            sample_rate: 44100,
+            channels: 1,
+            bits_per_sample: 16,
+            total_samples: 0,
+            md5: [0; 16],
+        }
+    }
+
+    /// Build a frame header with explicit field codes, then a one-byte coded
+    /// number, into a byte buffer.
+    fn frame_header_bytes(
+        sync: u64,
+        bs_code: u64,
+        sr_code: u64,
+        ch_code: u64,
+        ss_code: u64,
+    ) -> Vec<u8> {
+        let mut w = BitWriter::new();
+        w.write_bits(sync, 14);
+        w.write_bits(0, 1); // reserved
+        w.write_bits(0, 1); // blocking strategy
+        w.write_bits(bs_code, 4);
+        w.write_bits(sr_code, 4);
+        w.write_bits(ch_code, 4);
+        w.write_bits(ss_code, 3);
+        w.write_bits(0, 1); // reserved
+        w.write_bits(0, 8); // coded number (single byte)
+        w.into_bytes()
+    }
+
+    fn read_header_err(bytes: &[u8]) -> FlacError {
+        let mut r = BitReader::new(bytes);
+        read_frame_header(&mut r, &dummy_stream_info()).unwrap_err()
+    }
+
+    #[test]
+    fn bad_sync_code_is_rejected() {
+        let bytes = frame_header_bytes(0x0000, 1, 9, 0, 4);
+        assert!(matches!(
+            read_header_err(&bytes),
+            FlacError::CorruptStream(_)
+        ));
+    }
+
+    #[test]
+    fn reserved_block_size_code_zero_is_rejected() {
+        let bytes = frame_header_bytes(0x3FFE, 0, 9, 0, 4);
+        assert!(matches!(
+            read_header_err(&bytes),
+            FlacError::CorruptStream(_)
+        ));
+    }
+
+    #[test]
+    fn invalid_sample_rate_code_is_rejected() {
+        let bytes = frame_header_bytes(0x3FFE, 1, 15, 0, 4);
+        assert!(matches!(
+            read_header_err(&bytes),
+            FlacError::CorruptStream(_)
+        ));
+    }
+
+    #[test]
+    fn reserved_channel_assignment_is_rejected() {
+        let bytes = frame_header_bytes(0x3FFE, 1, 9, 11, 4);
+        assert!(matches!(
+            read_header_err(&bytes),
+            FlacError::CorruptStream(_)
+        ));
+    }
+
+    #[test]
+    fn reserved_sample_size_code_is_rejected() {
+        let bytes = frame_header_bytes(0x3FFE, 1, 9, 0, 3);
+        assert!(matches!(
+            read_header_err(&bytes),
+            FlacError::CorruptStream(_)
+        ));
+    }
+
+    #[test]
+    fn header_reads_explicit_block_and_sample_rate_bytes() {
+        // bs_code 7 (16-bit block size) and sr_code 13 (16-bit sample rate)
+        // both consume trailing bytes; this exercises those branches.
+        let mut w = BitWriter::new();
+        w.write_bits(0x3FFE, 14);
+        w.write_bits(0, 2);
+        w.write_bits(7, 4); // block size from 16-bit trailer
+        w.write_bits(13, 4); // sample rate from 16-bit trailer
+        w.write_bits(0, 4); // channels: independent mono
+        w.write_bits(1, 3); // 8-bit samples
+        w.write_bits(0, 1);
+        w.write_bits(0, 8); // coded number
+        w.write_bits(255, 16); // block size - 1 -> 256 samples
+        w.write_bits(44100, 16); // sample rate trailer
+        let bytes = w.into_bytes();
+        let mut r = BitReader::new(&bytes);
+        let h = read_frame_header(&mut r, &dummy_stream_info()).unwrap();
+        assert_eq!(h.block_size, 256);
+        assert_eq!(h.bits_per_sample, 8);
+    }
+
+    #[test]
+    fn subframe_nonzero_padding_bit_is_rejected() {
+        let mut w = BitWriter::new();
+        w.write_bits(1, 1); // padding bit must be zero
+        let bytes = w.into_bytes();
+        let mut r = BitReader::new(&bytes);
+        assert!(matches!(
+            decode_subframe(&mut r, 16, 16),
+            Err(FlacError::CorruptStream(_))
+        ));
+    }
+
+    #[test]
+    fn subframe_reserved_type_is_rejected() {
+        let mut w = BitWriter::new();
+        w.write_bits(0, 1); // padding
+        w.write_bits(2, 6); // reserved type code (2..7 are reserved)
+        w.write_bits(0, 1); // no wasted bits
+        let bytes = w.into_bytes();
+        let mut r = BitReader::new(&bytes);
+        assert!(matches!(
+            decode_subframe(&mut r, 16, 16),
+            Err(FlacError::CorruptStream(_))
+        ));
+    }
+
+    #[test]
+    fn wasted_bits_exceeding_depth_is_rejected() {
+        let mut w = BitWriter::new();
+        w.write_bits(0, 1); // padding
+        w.write_bits(0, 6); // constant subframe
+        w.write_bits(1, 1); // wasted-bits flag set
+                            // Unary value 16 (sixteen zeros then a one) -> 17 wasted bits, more
+                            // than the 16-bit depth.
+        for _ in 0..16 {
+            w.write_bits(0, 1);
+        }
+        w.write_bits(1, 1);
+        let bytes = w.into_bytes();
+        let mut r = BitReader::new(&bytes);
+        assert!(matches!(
+            decode_subframe(&mut r, 4, 16),
+            Err(FlacError::CorruptStream(_))
+        ));
+    }
+
+    #[test]
+    fn constant_subframe_with_wasted_bits_shifts() {
+        // A constant subframe with two wasted bits: the stored value is shifted
+        // left by two on output.
+        let mut w = BitWriter::new();
+        w.write_bits(0, 1); // padding
+        w.write_bits(0, 6); // constant
+        w.write_bits(1, 1); // wasted-bits flag
+        w.write_bits(0, 1); // one zero ...
+        w.write_bits(1, 1); // ... then the terminator: unary 1 -> 2 wasted bits
+                            // Effective depth 16 - 2 = 14 bits; store value 5.
+        w.write_bits(5, 14);
+        let bytes = w.into_bytes();
+        let mut r = BitReader::new(&bytes);
+        let samples = decode_subframe(&mut r, 3, 16).unwrap();
+        assert_eq!(samples, vec![5 << 2; 3]);
+    }
+
+    #[test]
+    fn reserved_residual_method_is_rejected() {
+        // Build a fixed order-0 subframe whose residual uses reserved method 2.
+        let mut w = BitWriter::new();
+        w.write_bits(0, 1); // padding
+        w.write_bits(8, 6); // fixed order 0
+        w.write_bits(0, 1); // no wasted bits
+        w.write_bits(2, 2); // residual method 2 is reserved
+        let bytes = w.into_bytes();
+        let mut r = BitReader::new(&bytes);
+        assert!(matches!(
+            decode_subframe(&mut r, 4, 16),
+            Err(FlacError::CorruptStream(_))
+        ));
+    }
+
+    #[test]
+    fn block_not_divisible_by_partitions_is_rejected() {
+        // Fixed order 0, method 0, partition order 2 (4 partitions) but a block
+        // size of 3 is not divisible by 4.
+        let mut w = BitWriter::new();
+        w.write_bits(0, 1); // padding
+        w.write_bits(8, 6); // fixed order 0
+        w.write_bits(0, 1); // no wasted bits
+        w.write_bits(0, 2); // method 0
+        w.write_bits(2, 4); // partition order 2 -> 4 partitions
+        let bytes = w.into_bytes();
+        let mut r = BitReader::new(&bytes);
+        assert!(matches!(
+            decode_subframe(&mut r, 3, 16),
+            Err(FlacError::CorruptStream(_))
+        ));
+    }
+
+    #[test]
+    fn rice_escape_code_reads_raw_residuals() {
+        // Fixed order 0, method 0, single partition, escape parameter (15) with
+        // a raw bit width of 4: three residuals stored verbatim.
+        let mut w = BitWriter::new();
+        w.write_bits(0, 1); // padding
+        w.write_bits(8, 6); // fixed order 0
+        w.write_bits(0, 1); // no wasted bits
+        w.write_bits(0, 2); // method 0
+        w.write_bits(0, 4); // partition order 0
+        w.write_bits(15, 4); // escape parameter
+        w.write_bits(4, 5); // raw width 4 bits
+                            // Three 4-bit signed residuals: 1, -1, 2.
+        w.write_bits(0b0001, 4);
+        w.write_bits(0b1111, 4);
+        w.write_bits(0b0010, 4);
+        let bytes = w.into_bytes();
+        let mut r = BitReader::new(&bytes);
+        let samples = decode_subframe(&mut r, 3, 16).unwrap();
+        // Order-0 fixed predictor: the residuals are the samples directly.
+        assert_eq!(samples, vec![1, -1, 2]);
     }
 }

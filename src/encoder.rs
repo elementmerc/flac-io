@@ -113,11 +113,18 @@ fn signed_range(bits: u32) -> (i64, i64) {
 
 fn write_streaminfo(out: &mut Vec<u8>, audio: &FlacAudio, total: usize) {
     let mut w = BitWriter::new();
-    // The block-size bounds describe the inter-frame size; the shorter final
-    // frame does not lower the minimum, matching the reference encoder.
-    let block = BLOCK_SIZE.min(total.max(1)) as u64;
-    w.write_bits(block.min(BLOCK_SIZE as u64), 16); // min block size
-    w.write_bits(BLOCK_SIZE as u64, 16); // max block size
+    // The block-size bounds describe the inter-frame block size. A stream whose
+    // whole length is a single short frame reports that frame's size; otherwise
+    // the nominal block size, since the shorter final frame of a longer stream
+    // does not lower the bound. Both bounds are equal because the encoder uses
+    // one fixed block size.
+    let block = if (1..BLOCK_SIZE).contains(&total) {
+        total as u64
+    } else {
+        BLOCK_SIZE as u64
+    };
+    w.write_bits(block, 16); // min block size
+    w.write_bits(block, 16); // max block size
     w.write_bits(0, 24); // min frame size: unknown
     w.write_bits(0, 24); // max frame size: unknown
     w.write_bits(audio.sample_rate as u64, 20);
