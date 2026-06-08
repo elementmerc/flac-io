@@ -53,6 +53,31 @@ let out = encode(&audio).unwrap();
 std::fs::write("song_reencoded.flac", out).unwrap();
 ```
 
+## Safety on untrusted input
+
+This crate is built to decode untrusted input safely. The decoder is the part
+that reads files you did not create, so it is hardened accordingly:
+
+- **No `unsafe` code.** The crate sets `#![forbid(unsafe_code)]`, so there are
+  no raw pointer tricks that could read or write out of bounds.
+- **No panics on hostile input.** Every length, code, and field is validated at
+  the point it is read. A malformed, truncated, or deliberately crafted stream
+  returns an error; it never crashes the process. This is covered by fuzz-style
+  tests that throw millions of random and bit-flipped bytes at the decoder.
+- **Bounded memory.** Decoding will not allocate without limit. The total
+  number of decoded samples is capped (near one billion, about four gibibytes
+  of buffer), so a few kilobytes of crafted input cannot trick the decoder into
+  asking for hundreds of gigabytes. A stream that needs more returns a
+  `LimitExceeded` error.
+- **Bit-exact self-check.** When the stream carries an MD5 of its samples (the
+  normal case), the decoder recomputes it and rejects any stream whose samples
+  do not match. A stream that records no MD5 (an all-zero digest) skips this
+  check, so treat samples from such streams as unverified.
+
+See [`SECURITY.md`](SECURITY.md) for the full threat model and how to report a
+vulnerability, and [`docs/architecture.md`](docs/architecture.md) for the
+internal design.
+
 ## Licence
 
 Licensed under either of Apache License, Version 2.0 or MIT licence at your
