@@ -84,11 +84,17 @@ pub fn info(bytes: &[u8]) -> Result<StreamInfo, FlacError> {
 
 /// Decode a FLAC byte stream into its samples and parameters.
 ///
+/// Decoding is bounded: a crafted stream cannot make this function allocate
+/// without limit. The total number of decoded samples (summed across channels)
+/// is capped near one billion, which holds the output buffer under about four
+/// gibibytes; a stream that needs more returns [`FlacError::LimitExceeded`]
+/// rather than risking the process.
+///
 /// # Errors
 ///
 /// Returns [`FlacError`] if the input is not FLAC, is truncated, is corrupt, a
-/// stored CRC does not match, or it uses a feature this crate does not
-/// implement.
+/// stored CRC does not match, it uses a feature this crate does not implement,
+/// or it exceeds the decode size cap.
 pub fn decode(bytes: &[u8]) -> Result<FlacAudio, FlacError> {
     decoder::decode(bytes)
 }

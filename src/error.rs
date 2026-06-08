@@ -24,6 +24,12 @@ pub enum FlacError {
     /// data is damaged.
     CrcMismatch,
 
+    /// The stream is structurally valid but asks the decoder to produce more
+    /// than a built-in safety limit allows (for example a sample total or a
+    /// run of maximum-size constant subframes that would exhaust memory). The
+    /// string names the limit that was hit.
+    LimitExceeded(String),
+
     /// The samples handed to the encoder are inconsistent (channel lengths
     /// differ, bit depth out of range, no channels, and so on). The string
     /// names the specific fault.
@@ -38,6 +44,9 @@ impl fmt::Display for FlacError {
             FlacError::CorruptStream(why) => write!(f, "corrupt FLAC stream: {why}"),
             FlacError::Unsupported(what) => write!(f, "unsupported FLAC feature: {what}"),
             FlacError::CrcMismatch => write!(f, "FLAC CRC check failed; the data is damaged"),
+            FlacError::LimitExceeded(what) => {
+                write!(f, "FLAC stream exceeds a decoder safety limit: {what}")
+            }
             FlacError::InvalidInput(why) => write!(f, "invalid input to the FLAC encoder: {why}"),
         }
     }
@@ -57,6 +66,7 @@ mod tests {
             FlacError::CorruptStream("why".into()),
             FlacError::Unsupported("what".into()),
             FlacError::CrcMismatch,
+            FlacError::LimitExceeded("cap".into()),
             FlacError::InvalidInput("why".into()),
         ];
         for v in &variants {
