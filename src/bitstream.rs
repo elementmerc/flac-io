@@ -107,6 +107,27 @@ impl<'a> BitReader<'a> {
         }
     }
 
+    /// Read `n` bits (1 to 33) as a two's-complement signed value into an i64.
+    ///
+    /// Subframe samples need this wider read: a side channel of a 32-bit stream
+    /// has an effective depth of 33 bits, one past what [`read_signed`] (which
+    /// returns an i32) can represent. The i64 result is narrowed back to i32 by
+    /// the decoder only after the inter-channel transform is undone, by which
+    /// point each channel's values fit 32 bits again.
+    ///
+    /// [`read_signed`]: BitReader::read_signed
+    pub fn read_signed_wide(&mut self, n: u32) -> Result<i64, FlacError> {
+        debug_assert!((1..=33).contains(&n));
+        let raw = self.read_u64(n)?;
+        let sign_bit = 1u64 << (n - 1);
+        if raw & sign_bit != 0 {
+            // Set every bit above n so the value is correctly negative.
+            Ok((raw | !((1u64 << n) - 1)) as i64)
+        } else {
+            Ok(raw as i64)
+        }
+    }
+
     /// Read a unary-coded value: the number of zero bits before the first one
     /// bit. The terminating one bit is consumed.
     pub fn read_unary(&mut self) -> Result<u32, FlacError> {
@@ -179,6 +200,21 @@ mod tests {
     fn signed_full_width() {
         let mut r = BitReader::new(&[0xFF, 0xFF, 0xFF, 0xFF]);
         assert_eq!(r.read_signed(32).unwrap(), -1);
+    }
+
+    #[test]
+    fn signed_wide_handles_33_bits() {
+        // 33 set bits is -1 in 33-bit two's complement.
+        let mut r = BitReader::new(&[0xFF, 0xFF, 0xFF, 0xFF, 0x80]);
+        assert_eq!(r.read_signed_wide(33).unwrap(), -1);
+
+        // The most negative 33-bit value, 1 followed by 32 zeros, is -2^32.
+        let mut r = BitReader::new(&[0x80, 0x00, 0x00, 0x00, 0x00]);
+        assert_eq!(r.read_signed_wide(33).unwrap(), -(1i64 << 32));
+
+        // A positive 33-bit value: 0 then 32 ones is 2^32 - 1.
+        let mut r = BitReader::new(&[0x7F, 0xFF, 0xFF, 0xFF, 0x80]);
+        assert_eq!(r.read_signed_wide(33).unwrap(), (1i64 << 32) - 1);
     }
 
     #[test]

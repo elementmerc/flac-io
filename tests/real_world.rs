@@ -118,6 +118,23 @@ fn known_fixture_shapes() {
 }
 
 #[test]
+fn decodes_32_bit_side_channel_stream() {
+    // A real 32-bit stream from the reference encoder that uses a mid/side
+    // frame. The side channel's effective depth is 33 bits, one past i32, so
+    // this exercises the wide sample path. A successful decode means the
+    // STREAMINFO MD5 matched, i.e. every 33-bit-derived sample came back
+    // bit-exact.
+    let bytes = std::fs::read(fixtures_dir().join("realmusic_32_96.flac")).unwrap();
+    let a = flac_io::decode(&bytes).expect("decode 32-bit side stream");
+    assert_eq!(a.bits_per_sample, 32);
+    assert_eq!(a.channels, 2);
+    assert!(a.samples_per_channel() > 0);
+    // The crate's own encoder also round-trips the 32-bit samples.
+    let re = flac_io::encode(&a).expect("re-encode 32-bit samples");
+    assert_eq!(flac_io::decode(&re).unwrap().samples, a.samples);
+}
+
+#[test]
 fn rich_and_minimal_metadata_both_parse() {
     // The decoder must skip padding, seek tables, comments and pictures, and
     // also accept a stream with only STREAMINFO.

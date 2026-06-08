@@ -71,8 +71,10 @@ pub fn decode_frame(
         ));
     }
 
-    // Decode each channel's subframe. Side channels carry one extra bit.
-    let mut decoded: Vec<Vec<i32>> = Vec::with_capacity(out.len());
+    // Decode each channel's subframe. Side channels carry one extra bit, so the
+    // sample plane is i64 until the inter-channel transform is undone; only then
+    // does every channel fit back into i32.
+    let mut decoded: Vec<Vec<i64>> = Vec::with_capacity(out.len());
     for ch in 0..out.len() {
         let bps = subframe_bits_per_sample(header.channel_assignment, ch, header.bits_per_sample);
         decoded.push(decode_subframe(reader, n, bps)?);
@@ -89,8 +91,12 @@ pub fn decode_frame(
         return Err(FlacError::CrcMismatch);
     }
 
+    // Narrow back to i32 for output. After decorrelation each channel holds
+    // values within the stream's declared bit depth (at most 32 bits), so the
+    // cast is lossless for any valid stream; a stream where it is not is caught
+    // by the STREAMINFO MD5 self-check.
     for (ch, samples) in decoded.into_iter().enumerate() {
-        out[ch].extend_from_slice(&samples);
+        out[ch].extend(samples.into_iter().map(|s| s as i32));
     }
     Ok(n)
 }
@@ -237,7 +243,7 @@ fn decode_subframe(
     reader: &mut BitReader,
     block_size: usize,
     bits_per_sample: u8,
-) -> Result<Vec<i32>, FlacError> {
+) -> Result<Vec<i64>, FlacError> {
     // Subframe header: a zero padding bit, 6 type bits, a wasted-bits flag.
     let pad = reader.read_u32(1)?;
     if pad != 0 {
@@ -254,11 +260,14 @@ fn decode_subframe(
         0
     };
 
-    // Effective bit depth after removing the wasted low bits.
+    // Effective bit depth after removing the wasted low bits. The cap is 33,
+    // not 32: a side channel of a 32-bit stream carries one extra bit. Only a
+    // side channel can reach 33 here, because an independent channel's depth
+    // comes straight from the frame header and never exceeds 32.
     let bps = (bits_per_sample as u32)
         .checked_sub(wasted_bits)
         .ok_or_else(|| FlacError::CorruptStream("wasted bits exceed sample depth".into()))?;
-    if bps == 0 || bps > 32 {
+    if bps == 0 || bps > 33 {
         return Err(FlacError::CorruptStream(
             "effective sample depth out of range".into(),
         ));
@@ -279,6 +288,9 @@ fn decode_subframe(
     };
 
     if wasted_bits > 0 {
+        // Samples are i64 here, so this shift cannot overflow: `wasted_bits` is
+        // at most 32 (a 33-bit side channel with all but one bit wasted) and an
+        // i64 absorbs a 33-bit value shifted left by 32.
         for s in &mut samples {
             *s <<= wasted_bits;
         }
@@ -290,8 +302,8 @@ fn decode_constant(
     reader: &mut BitReader,
     block_size: usize,
     bps: u32,
-) -> Result<Vec<i32>, FlacError> {
-    let value = reader.read_signed(bps)?;
+) -> Result<Vec<i64>, FlacError> {
+    let value = reader.read_signed_wide(bps)?;
     Ok(vec![value; block_size])
 }
 
@@ -299,10 +311,10 @@ fn decode_verbatim(
     reader: &mut BitReader,
     block_size: usize,
     bps: u32,
-) -> Result<Vec<i32>, FlacError> {
+) -> Result<Vec<i64>, FlacError> {
     let mut samples = Vec::with_capacity(block_size);
     for _ in 0..block_size {
-        samples.push(reader.read_signed(bps)?);
+        samples.push(reader.read_signed_wide(bps)?);
     }
     Ok(samples)
 }
@@ -312,7 +324,7 @@ fn decode_fixed(
     block_size: usize,
     bps: u32,
     order: usize,
-) -> Result<Vec<i32>, FlacError> {
+) -> Result<Vec<i64>, FlacError> {
     if order > block_size {
         return Err(FlacError::CorruptStream(
             "fixed predictor order exceeds block size".into(),
@@ -321,11 +333,11 @@ fn decode_fixed(
     // Warmup samples stored verbatim.
     let mut samples: Vec<i64> = Vec::with_capacity(block_size);
     for _ in 0..order {
-        samples.push(reader.read_signed(bps)? as i64);
+        samples.push(reader.read_signed_wide(bps)?);
     }
     let residual = read_residual(reader, block_size, order)?;
     restore_fixed(&mut samples, &residual, order);
-    Ok(samples.into_iter().map(|s| s as i32).collect())
+    Ok(samples)
 }
 
 fn restore_fixed(samples: &mut Vec<i64>, residual: &[i64], order: usize) {
@@ -363,7 +375,7 @@ fn decode_lpc(
     block_size: usize,
     bps: u32,
     order: usize,
-) -> Result<Vec<i32>, FlacError> {
+) -> Result<Vec<i64>, FlacError> {
     if order as u32 > MAX_LPC_ORDER || order > block_size {
         return Err(FlacError::CorruptStream(
             "LPC order exceeds the cap or block size".into(),
@@ -371,7 +383,7 @@ fn decode_lpc(
     }
     let mut samples: Vec<i64> = Vec::with_capacity(block_size);
     for _ in 0..order {
-        samples.push(reader.read_signed(bps)? as i64);
+        samples.push(reader.read_signed_wide(bps)?);
     }
 
     // Quantised linear-predictor coefficients.
@@ -403,7 +415,7 @@ fn decode_lpc(
         }
         samples.push(r.wrapping_add(pred >> shift));
     }
-    Ok(samples.into_iter().map(|s| s as i32).collect())
+    Ok(samples)
 }
 
 /// Read the residual block (the prediction errors after the warmup samples).
@@ -479,36 +491,34 @@ fn read_rice(reader: &mut BitReader, k: u32) -> Result<i64, FlacError> {
     Ok(((value >> 1) as i64) ^ -((value & 1) as i64))
 }
 
-fn undo_channel_decorrelation(assignment: ChannelAssignment, channels: &mut [Vec<i32>]) {
+fn undo_channel_decorrelation(assignment: ChannelAssignment, channels: &mut [Vec<i64>]) {
     match assignment {
         ChannelAssignment::Independent(_) => {}
         ChannelAssignment::LeftSide => {
             // ch0 = left, ch1 = side = left - right -> right = left - side.
             for i in 0..channels[0].len() {
-                let left = channels[0][i] as i64;
-                let side = channels[1][i] as i64;
-                channels[1][i] = (left - side) as i32;
+                let left = channels[0][i];
+                let side = channels[1][i];
+                channels[1][i] = left - side;
             }
         }
         ChannelAssignment::RightSide => {
             // ch0 = side = left - right, ch1 = right -> left = right + side.
             for i in 0..channels[1].len() {
-                let side = channels[0][i] as i64;
-                let right = channels[1][i] as i64;
-                channels[0][i] = (right + side) as i32;
+                let side = channels[0][i];
+                let right = channels[1][i];
+                channels[0][i] = right + side;
             }
         }
         ChannelAssignment::MidSide => {
             // ch0 = mid = (left+right)>>1, ch1 = side = left-right.
             for i in 0..channels[0].len() {
-                let mid = channels[0][i] as i64;
-                let side = channels[1][i] as i64;
+                let mid = channels[0][i];
+                let side = channels[1][i];
                 // Recover the bit lost in the mid right-shift from the side parity.
                 let mid2 = (mid << 1) | (side & 1);
-                let left = (mid2 + side) >> 1;
-                let right = (mid2 - side) >> 1;
-                channels[0][i] = left as i32;
-                channels[1][i] = right as i32;
+                channels[0][i] = (mid2 + side) >> 1;
+                channels[1][i] = (mid2 - side) >> 1;
             }
         }
     }
@@ -565,7 +575,7 @@ mod tests {
     #[test]
     fn mid_side_inverts() {
         // left=100 right=40 -> mid=(140)>>1=70, side=60.
-        let mut channels = vec![vec![70i32], vec![60i32]];
+        let mut channels = vec![vec![70i64], vec![60i64]];
         undo_channel_decorrelation(ChannelAssignment::MidSide, &mut channels);
         assert_eq!(channels[0][0], 100);
         assert_eq!(channels[1][0], 40);
@@ -573,7 +583,7 @@ mod tests {
 
     #[test]
     fn left_side_inverts() {
-        let mut channels = vec![vec![100i32], vec![60i32]]; // left=100, side=60 -> right=40
+        let mut channels = vec![vec![100i64], vec![60i64]]; // left=100, side=60 -> right=40
         undo_channel_decorrelation(ChannelAssignment::LeftSide, &mut channels);
         assert_eq!(channels[0][0], 100);
         assert_eq!(channels[1][0], 40);
@@ -581,10 +591,28 @@ mod tests {
 
     #[test]
     fn right_side_inverts() {
-        let mut channels = vec![vec![60i32], vec![40i32]]; // side=60, right=40 -> left=100
+        let mut channels = vec![vec![60i64], vec![40i64]]; // side=60, right=40 -> left=100
         undo_channel_decorrelation(ChannelAssignment::RightSide, &mut channels);
         assert_eq!(channels[0][0], 100);
         assert_eq!(channels[1][0], 40);
+    }
+
+    #[test]
+    fn mid_side_inverts_full_32_bit_range() {
+        // A 32-bit stereo sample whose side value needs 33 bits: left = i32::MAX,
+        // right = i32::MIN. mid = (MAX + MIN) >> 1 = -1 (in 32-bit), side =
+        // MAX - MIN = 2^32 - 1, which is the case the i64 plane exists for.
+        let left = i32::MAX as i64;
+        let right = i32::MIN as i64;
+        let mid = (left + right) >> 1;
+        let side = left - right;
+        let mut channels = vec![vec![mid], vec![side]];
+        undo_channel_decorrelation(ChannelAssignment::MidSide, &mut channels);
+        assert_eq!(channels[0][0], left);
+        assert_eq!(channels[1][0], right);
+        // Both reconstructed channels fit back into i32.
+        assert_eq!(channels[0][0] as i32, i32::MAX);
+        assert_eq!(channels[1][0] as i32, i32::MIN);
     }
 
     // ── Crafted-stream error-branch coverage ──────────────────────────────
