@@ -2,39 +2,103 @@
 
 A pure-Rust FLAC decoder and encoder.
 
-FLAC (Free Lossless Audio Codec) stores audio so that decoding gives back the
-exact original samples, bit for bit. This crate reads a FLAC byte stream into
-its raw integer samples and writes raw samples back into a valid FLAC stream,
-without ever decoding to or from a lossy intermediate.
+FLAC, the Free Lossless Audio Codec, is a way to shrink audio files without
+losing a single detail. A codec is just a "coder and decoder", the thing that
+packs sound into a file and unpacks it again. "Lossless" is the important word:
+unlike MP3, which throws away parts of the sound you probably will not notice,
+FLAC gives you back the exact audio you started with, down to the last number.
 
-It exists for steganography, watermarking, forensic analysis, and any audio
-work that needs direct access to the decoded sample plane with a guarantee that
-a decode followed by an encode preserves the data exactly.
+Think of it like a ZIP file, but for sound. When you unzip a document you get
+the original file back, character for character. FLAC does the same for audio.
+
+```
+   original audio              FLAC file                back again
+   (a list of numbers)         (smaller)                (same numbers)
+  +-------------------+ encode +-----------+  decode  +-------------------+
+  |  -3  5  5  12 ... | -----> |  fLaC.... | -------> |  -3  5  5  12 ... |
+  +-------------------+        +-----------+          +-------------------+
+                  what comes out is identical to what went in
+```
+
+This crate reads a FLAC file into those raw numbers (called samples), and writes
+samples back into a valid FLAC file. It never passes through a lossy format in
+between, so the numbers always survive the trip exactly.
+
+It is built for work that needs the raw samples directly: hiding data inside
+audio (steganography), adding inaudible markers (watermarking), forensic
+analysis, and anything else where you need the exact numbers and a promise that
+decoding then re-encoding changes nothing.
+
+## What a "sample" is
+
+Sound is a wave. To store it, a computer measures the height of that wave many
+thousands of times a second (44,100 times a second for a CD). Each measurement
+is one sample: a single whole number. Play the numbers back fast enough and you
+hear the sound again. It is the same trick a flipbook uses to turn still
+drawings into motion.
+
+This crate hands you those numbers, one list per channel (left and right for
+stereo):
+
+```
+  samples[0] = left   ->  [ s0  s1  s2  s3  s4  ... ]
+  samples[1] = right  ->  [ s0  s1  s2  s3  s4  ... ]
+                             |
+                             one column = one instant in time
+```
+
+Every channel list has the same length, and the numbers are plain signed
+integers (they can be negative, because a wave goes up and down).
 
 ## What this crate does
 
-- Decode a FLAC stream to interleaved (or per-channel) integer samples.
-- Read the stream metadata: sample rate, channel count, bit depth, total
-  samples.
-- Encode integer samples back into a valid FLAC stream.
-- Round-trip guarantee: decoding a FLAC file and re-encoding the same samples
-  produces a stream that decodes to the identical samples.
+You get three things, two doors into a FLAC file and one back out:
+
+```
+        bytes of a .flac file               raw samples
+       +----------------------+  decode()   +---------------------+
+       |  66 4C 61 43 00 ...   | ----------> |  [ -3, 5, 5, 12 ]   |
+       |                       |             |  one list / channel |
+       |                       |  encode()   |                     |
+       |                       | <---------- |                     |
+       +----------------------+              +---------------------+
+                 ^
+                 | info()  ->  just the facts: 44100 Hz, 2 channels, 16-bit
+```
+
+- **`decode`** turns FLAC bytes into the raw samples plus the basic facts about
+  the audio.
+- **`info`** reads just those facts (sample rate, channels, bit depth, total
+  length) without decoding the audio, so it stays fast on a huge file.
+- **`encode`** turns raw samples back into a valid FLAC file.
+
+The promise that ties them together: decode a file, encode the same samples, and
+the result decodes to the identical numbers. Nothing drifts.
 
 ## What this crate does not do
 
-- It does not resample, dither, or change bit depth.
-- It does not decode to floating-point; samples stay as signed integers in
-  their native bit depth.
-- It does not read Ogg-encapsulated FLAC (only the native FLAC stream format).
+- It does not change the audio: no resampling, no volume changes, no dithering,
+  no switching the bit depth.
+- It does not give you floating-point samples; they stay as whole numbers in the
+  file's own bit depth.
+- It does not read Ogg-wrapped FLAC, only plain FLAC files.
 
-## Supported FLAC features
+So it is a precise in-and-out tool, not an audio editor.
 
-- All four subframe types: constant, verbatim, fixed (orders 0 to 4), and LPC
-  (orders 1 to 32).
-- Both Rice residual coding methods (4-bit and 5-bit partition parameters).
-- All inter-channel decorrelation modes (independent, left/side, right/side,
-  mid/side).
-- Fixed and variable block-size streams.
+## Which FLAC features it understands
+
+FLAC has a few ways of packing each chunk of audio. This crate handles all of
+them, so it reads files from any standard FLAC encoder:
+
+- All four block types: constant, verbatim, fixed (orders 0 to 4), and LPC
+  (orders 1 to 32). These are the maths tricks FLAC uses to describe a run of
+  samples compactly.
+- Both ways of coding the leftover error values (4-bit and 5-bit Rice
+  parameters).
+- All the stereo tricks where one channel is stored as a difference from
+  another (independent, left/side, right/side, mid/side), including at the full
+  32-bit depth.
+- Files with a fixed block size and files that vary it.
 - Bit depths from 4 to 32 bits per sample.
 
 ## Example
@@ -48,35 +112,41 @@ let bytes = std::fs::read("song.flac").unwrap();
 let audio = decode(&bytes).unwrap();
 println!("{} Hz, {} channels, {} bits", audio.sample_rate, audio.channels, audio.bits_per_sample);
 
-// Re-encode the same samples into a fresh FLAC stream.
+// Re-encode the same samples into a fresh FLAC file.
 let out = encode(&audio).unwrap();
 std::fs::write("song_reencoded.flac", out).unwrap();
 ```
 
 ## Safety on untrusted input
 
-This crate is built to decode untrusted input safely. The decoder is the part
-that reads files you did not create, so it is hardened accordingly:
+A FLAC file might come from anywhere, so the decoder treats every byte as if an
+attacker wrote it. Here is what protects you:
 
-- **No `unsafe` code.** The crate sets `#![forbid(unsafe_code)]`, so there are
-  no raw pointer tricks that could read or write out of bounds.
-- **No panics on hostile input.** Every length, code, and field is validated at
-  the point it is read. A malformed, truncated, or deliberately crafted stream
-  returns an error; it never crashes the process. This is covered by fuzz-style
-  tests that throw millions of random and bit-flipped bytes at the decoder.
-- **Bounded memory.** Decoding will not allocate without limit. The total
-  number of decoded samples is capped (near one billion, about four gibibytes
-  of buffer), so a few kilobytes of crafted input cannot trick the decoder into
-  asking for hundreds of gigabytes. A stream that needs more returns a
-  `LimitExceeded` error.
-- **Bit-exact self-check.** When the stream carries an MD5 of its samples (the
-  normal case), the decoder recomputes it and rejects any stream whose samples
-  do not match. A stream that records no MD5 (an all-zero digest) skips this
-  check, so treat samples from such streams as unverified.
+```
+  bad bytes in  ----> [ check every field ] ----> a clear error, never a crash
+                      [ cap the memory     ]
+                      [ no unsafe code     ]
+```
+
+- **No `unsafe` code.** The crate sets `#![forbid(unsafe_code)]`, so the compiler
+  guarantees there are no memory tricks that could read or write out of bounds.
+- **No crashes on bad input.** Every length and code is checked the moment it is
+  read. A broken, cut-off, or deliberately nasty file returns an error; it never
+  takes down your program. Tests throw millions of random and bit-flipped bytes
+  at the decoder to keep this honest.
+- **Bounded memory.** Decoding cannot ask for unlimited memory. The number of
+  samples it will produce is capped (near one billion, about four gibibytes), so
+  a few kilobytes of crafted input cannot trick it into trying to allocate
+  hundreds of gigabytes. A file that wants more gets a `LimitExceeded` error.
+- **Built-in correctness check.** A FLAC file usually stores a fingerprint (an
+  MD5 hash) of its samples. The decoder recomputes that fingerprint from what it
+  decoded and rejects the file if they disagree, so a successful decode really
+  is bit-for-bit correct. A file that stores no fingerprint (all zeros) skips
+  this check, so treat its samples as unverified.
 
 See [`SECURITY.md`](SECURITY.md) for the full threat model and how to report a
-vulnerability, and [`docs/architecture.md`](docs/architecture.md) for the
-internal design.
+problem, and [`docs/architecture.md`](docs/architecture.md) for how the code is
+built.
 
 ## Licence
 
