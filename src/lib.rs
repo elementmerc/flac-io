@@ -76,10 +76,13 @@ impl FlacAudio {
 ///
 /// # Errors
 ///
-/// Returns [`FlacError`] if the input is not FLAC, is truncated, or its
-/// STREAMINFO block is corrupt.
+/// Returns [`FlacError`] if the input is not FLAC, is truncated, its STREAMINFO
+/// block is corrupt, or it declares a channel count or bit depth this crate
+/// cannot decode (so `info` and [`decode`] agree on which streams are valid).
 pub fn info(bytes: &[u8]) -> Result<StreamInfo, FlacError> {
-    metadata::read_header(bytes).map(|h| h.stream_info)
+    let header = metadata::read_header(bytes)?;
+    decoder::validate_stream_info(&header.stream_info)?;
+    Ok(header.stream_info)
 }
 
 /// Decode a FLAC byte stream into its samples and parameters.

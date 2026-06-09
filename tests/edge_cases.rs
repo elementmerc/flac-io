@@ -107,6 +107,25 @@ fn unsupported_low_bit_depth_is_rejected() {
 }
 
 #[test]
+fn info_rejects_unsupported_bit_depth_like_decode() {
+    // info() must agree with decode() on validity: a 3-bit stream is below the
+    // supported minimum, so a metadata-only read rejects it too.
+    let stream = header_only(2);
+    let info_err = flac_io::info(&stream).unwrap_err();
+    let decode_err = decode(&stream).unwrap_err();
+    assert!(matches!(info_err, flac_io::FlacError::Unsupported(_)));
+    assert_eq!(info_err, decode_err);
+}
+
+#[test]
+fn info_accepts_supported_depth() {
+    // A valid 16-bit header reads its metadata without decoding frames.
+    let info = flac_io::info(&header_only(15)).expect("info on supported depth");
+    assert_eq!(info.bits_per_sample, 16);
+    assert_eq!(info.channels, 1);
+}
+
+#[test]
 fn supported_depth_header_only_decodes_to_silence() {
     // A valid header with no frames decodes to zero samples (16-bit here).
     let stream = header_only(15);

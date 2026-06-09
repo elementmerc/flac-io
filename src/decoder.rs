@@ -3,7 +3,7 @@
 use crate::bitstream::BitReader;
 use crate::error::FlacError;
 use crate::frame::decode_frame;
-use crate::metadata::read_header;
+use crate::metadata::{read_header, StreamInfo};
 use crate::sample_bytes::md5_of_samples;
 use crate::FlacAudio;
 
@@ -19,10 +19,10 @@ use crate::FlacAudio;
 /// is far below it; a stream that needs more is rejected rather than risked.
 const MAX_TOTAL_SAMPLES: u64 = 1 << 30;
 
-pub fn decode(bytes: &[u8]) -> Result<FlacAudio, FlacError> {
-    let header = read_header(bytes)?;
-    let info = header.stream_info;
-
+/// Reject stream parameters this crate cannot decode. Shared by [`decode`] and
+/// `info` so a metadata-only read agrees with a full decode on which streams
+/// are acceptable, rather than the two drifting apart.
+pub(crate) fn validate_stream_info(info: &StreamInfo) -> Result<(), FlacError> {
     if info.channels < 1 || info.channels > 8 {
         return Err(FlacError::Unsupported(format!(
             "channel count {}",
@@ -35,6 +35,14 @@ pub fn decode(bytes: &[u8]) -> Result<FlacAudio, FlacError> {
             info.bits_per_sample
         )));
     }
+    Ok(())
+}
+
+pub fn decode(bytes: &[u8]) -> Result<FlacAudio, FlacError> {
+    let header = read_header(bytes)?;
+    let info = header.stream_info;
+
+    validate_stream_info(&info)?;
 
     let channels = info.channels as u64;
 
