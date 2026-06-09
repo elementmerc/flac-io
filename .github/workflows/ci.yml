@@ -31,8 +31,8 @@ jobs:
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
         with:
           cache-on-failure: true   # cache even failed builds so retries are fast
-      - run: cargo test --all-features
-      - run: cargo run --example smoke
+      - run: cargo test --locked --all-features
+      - run: cargo run --locked --example smoke
 
   msrv:
     name: MSRV (1.74)
@@ -44,7 +44,7 @@ jobs:
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
         with:
           cache-on-failure: true
-      - run: cargo check --lib
+      - run: cargo check --locked --lib
 
   clippy:
     name: Clippy
@@ -57,7 +57,7 @@ jobs:
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
         with:
           cache-on-failure: true
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
   fmt:
     name: Rustfmt
@@ -97,4 +97,4 @@ jobs:
       # Built from source rather than a third-party install action, to keep
       # the supply-chain surface to first-party actions only.
       - run: cargo install cargo-llvm-cov --locked
-      - run: cargo llvm-cov --all-features --fail-under-lines 90
+      - run: cargo llvm-cov --locked --all-features --fail-under-lines 90
