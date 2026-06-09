@@ -101,20 +101,6 @@ pub fn to_native_flac(bytes: &[u8], headers_only: bool) -> Result<Vec<u8>, FlacE
             return Err(FlacError::Truncated);
         }
 
-        // Verify the page checksum (computed over the page with its own checksum
-        // field zeroed). A mismatch means the page is damaged.
-        let stored_crc = u32::from_le_bytes([
-            bytes[pos + 22],
-            bytes[pos + 23],
-            bytes[pos + 24],
-            bytes[pos + 25],
-        ]);
-        let mut page = bytes[pos..body_end].to_vec();
-        page[22..26].fill(0);
-        if ogg_crc32(&page) != stored_crc {
-            return Err(FlacError::CrcMismatch);
-        }
-
         let is_flac_bos = flags & FLAG_BOS != 0
             && body_len >= 5
             && bytes[body_start] == FLAC_MAPPING_TYPE
@@ -132,6 +118,23 @@ pub fn to_native_flac(bytes: &[u8], headers_only: bool) -> Result<Vec<u8>, FlacE
         } else if Some(page_serial) != serial {
             pos = body_end;
             continue;
+        }
+
+        // Verify the checksum only on pages of our stream (computed over the
+        // page with its own checksum field zeroed). Checking only owned pages
+        // means a damaged page in an unrelated multiplexed stream does not stop
+        // us recovering the FLAC audio. A mismatch on our page means it is
+        // damaged.
+        let stored_crc = u32::from_le_bytes([
+            bytes[pos + 22],
+            bytes[pos + 23],
+            bytes[pos + 24],
+            bytes[pos + 25],
+        ]);
+        let mut page = bytes[pos..body_end].to_vec();
+        page[22..26].fill(0);
+        if ogg_crc32(&page) != stored_crc {
+            return Err(FlacError::CrcMismatch);
         }
 
         // Reassemble packets from this page's segments. A packet is a run of
@@ -474,6 +477,140 @@ mod tests {
         assert!(matches!(
             to_native_flac(&ogg, false),
             Err(FlacError::NotFlac)
+        ));
+    }
+
+    /// Build one standalone page carrying a single packet, for crafting awkward
+    /// containers. `crc` overrides the checksum (to test that foreign pages are
+    /// skipped without checking theirs); `None` computes the correct one.
+    fn make_page(serial: u32, seq: u32, flags: u8, body: &[u8], crc: Option<u32>) -> Vec<u8> {
+        let mut p = Vec::new();
+        p.extend_from_slice(OGG_MAGIC);
+        p.push(0);
+        p.push(flags);
+        p.extend_from_slice(&0i64.to_le_bytes());
+        p.extend_from_slice(&serial.to_le_bytes());
+        p.extend_from_slice(&seq.to_le_bytes());
+        let crc_at = p.len();
+        p.extend_from_slice(&[0u8; 4]);
+        let mut segs = Vec::new();
+        let mut rem = body.len();
+        loop {
+            let v = rem.min(255);
+            rem -= v;
+            segs.push(v as u8);
+            if v < 255 {
+                break;
+            }
+        }
+        p.push(segs.len() as u8);
+        p.extend_from_slice(&segs);
+        p.extend_from_slice(body);
+        let c = crc.unwrap_or_else(|| {
+            let mut q = p.clone();
+            q[crc_at..crc_at + 4].fill(0);
+            ogg_crc32(&q)
+        });
+        p[crc_at..crc_at + 4].copy_from_slice(&c.to_le_bytes());
+        p
+    }
+
+    #[test]
+    fn exact_multiple_of_255_packet_round_trips() {
+        // A packet whose length is a multiple of 255 must end with a 0-valued
+        // lacing segment, or the demuxer would read it as continuing.
+        for len in [255usize, 510, 255 * 4] {
+            let packets = vec![
+                Packet {
+                    data: mapping_header(0, &[0x09; 38]),
+                    granule: 0,
+                },
+                Packet {
+                    data: vec![0x7E; len],
+                    granule: 1,
+                },
+            ];
+            let ogg = mux(&packets);
+            assert_eq!(
+                to_native_flac(&ogg, false).unwrap(),
+                expected_native(&packets),
+                "len {len}"
+            );
+        }
+    }
+
+    #[test]
+    fn skips_foreign_multiplexed_stream_without_checking_its_crc() {
+        // A non-FLAC logical stream comes first, with a deliberately wrong
+        // checksum. The demuxer must skip it by serial and still decode the
+        // FLAC stream that follows.
+        let flac = vec![
+            Packet {
+                data: mapping_header(0, &[0x42; 38]),
+                granule: 0,
+            },
+            Packet {
+                data: vec![0xAA; 80],
+                granule: 100,
+            },
+        ];
+        let foreign = make_page(
+            0x1234_5678,
+            0,
+            FLAG_BOS,
+            b"NotFLACheader",
+            Some(0xDEAD_BEEF),
+        );
+        let mut stream = foreign;
+        stream.extend_from_slice(&mux(&flac));
+        assert_eq!(
+            to_native_flac(&stream, false).unwrap(),
+            expected_native(&flac)
+        );
+    }
+
+    #[test]
+    fn chained_streams_decode_the_first() {
+        // Two FLAC logical streams concatenated; the demuxer stops at the first
+        // stream's end-of-stream page.
+        let first = vec![
+            Packet {
+                data: mapping_header(0, &[0x01; 38]),
+                granule: 0,
+            },
+            Packet {
+                data: vec![0x11; 40],
+                granule: 10,
+            },
+        ];
+        let second = vec![
+            Packet {
+                data: mapping_header(0, &[0x02; 38]),
+                granule: 0,
+            },
+            Packet {
+                data: vec![0x22; 40],
+                granule: 10,
+            },
+        ];
+        let mut stream = mux(&first);
+        stream.extend_from_slice(&mux(&second));
+        assert_eq!(
+            to_native_flac(&stream, false).unwrap(),
+            expected_native(&first)
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_ogg_version() {
+        let mut ogg = mux(&[Packet {
+            data: mapping_header(0, &[0; 38]),
+            granule: 0,
+        }]);
+        ogg[4] = 1; // structure version must be 0
+        assert!(matches!(
+            to_native_flac(&ogg, false),
+            Err(FlacError::Unsupported(_))
         ));
     }
 }
