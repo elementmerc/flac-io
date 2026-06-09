@@ -75,13 +75,28 @@ You get three things, two doors into a FLAC file and one back out:
 The promise that ties them together: decode a file, encode the same samples, and
 the result decodes to the identical numbers. Nothing drifts.
 
+### Two containers, read automatically
+
+FLAC comes in two wrappers: the plain `.flac` file, and an `.oga` file where the
+same FLAC data rides inside an Ogg container (the box that Vorbis and Opus use
+too). You do not have to say which one you have: `decode` and `info` look at the
+first few bytes and pick the right path themselves.
+
+```
+   .flac  (starts with "fLaC")  --.
+                                   >--  decode() / info()  -->  same result
+   .oga   (starts with "OggS")  --'
+```
+
+Writing is the one case where you choose, because raw samples do not say which
+wrapper you want: `encode` writes a `.flac`, `encode_ogg` writes an `.oga`.
+
 ## What this crate does not do
 
 - It does not change the audio: no resampling, no volume changes, no dithering,
   no switching the bit depth.
 - It does not give you floating-point samples; they stay as whole numbers in the
   file's own bit depth.
-- It does not read Ogg-wrapped FLAC, only plain FLAC files.
 
 So it is a precise in-and-out tool, not an audio editor.
 
@@ -100,6 +115,8 @@ them, so it reads files from any standard FLAC encoder:
   32-bit depth.
 - Files with a fixed block size and files that vary it.
 - Bit depths from 4 to 32 bits per sample.
+- Both containers: plain native FLAC (`.flac`) and Ogg-wrapped FLAC (`.oga`),
+  read and written.
 
 ## Example
 
@@ -116,6 +133,9 @@ println!("{} Hz, {} channels, {} bits", audio.sample_rate, audio.channels, audio
 let out = encode(&audio).unwrap();
 std::fs::write("song_reencoded.flac", out).unwrap();
 ```
+
+The same `decode` call also reads an Ogg-wrapped `.oga` file with no extra
+steps. To write one, swap `encode` for `flac_io::encode_ogg`.
 
 ## Safety on untrusted input
 

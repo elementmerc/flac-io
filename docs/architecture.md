@@ -58,10 +58,12 @@ lib.rs            public API: decode(), encode(), info(), FlacAudio
   |
   +-- encoder.rs    drives a full encode: STREAMINFO -> frame per block
   |
+  +-- ogg.rs          Ogg container: demux .oga to native FLAC, mux native to .oga
+  |
   +-- (shared building blocks)
         bitstream.rs     BitReader: pull big-bit-first fields from a byte slice
         bitwriter.rs     BitWriter: push big-bit-first fields into a byte buffer
-        crc.rs           CRC-8 and CRC-16 for the frame integrity words
+        crc.rs           CRC-8 and CRC-16 (frame words) and CRC-32 (Ogg pages)
         md5.rs           self-contained MD5 for the sample digest
         sample_bytes.rs  serialise samples the way FLAC's MD5 expects
         error.rs         the single public error type, FlacError
@@ -70,13 +72,14 @@ lib.rs            public API: decode(), encode(), info(), FlacAudio
 | Module | Responsibility | Knows about |
 |---|---|---|
 | `lib.rs` | Public surface and the `FlacAudio` type | everything below |
-| `decoder.rs` | Orchestrate a decode, enforce the size cap, run the MD5 check | metadata, frame, sample_bytes |
-| `encoder.rs` | Orchestrate an encode, choose subframe types, write bytes | bitwriter, crc, sample_bytes |
+| `decoder.rs` | Orchestrate a decode, enforce the size cap, run the MD5 check | metadata, frame, sample_bytes, ogg |
+| `encoder.rs` | Orchestrate an encode, choose subframe types, write bytes | bitwriter, crc, sample_bytes, ogg |
+| `ogg.rs` | Demux `.oga` to native FLAC and mux native FLAC to `.oga` | crc, metadata |
 | `metadata.rs` | The header: marker plus metadata block chain | bitstream |
 | `frame.rs` | One frame: header, subframes, residuals, decorrelation | bitstream, crc |
 | `bitstream.rs` | Read N bits, signed values, unary codes | nothing |
 | `bitwriter.rs` | Write N bits, unary codes, byte alignment | nothing |
-| `crc.rs` | The two FLAC CRCs | nothing |
+| `crc.rs` | The two FLAC CRCs plus the Ogg page CRC-32 | nothing |
 | `md5.rs` | Streaming MD5 | nothing |
 | `sample_bytes.rs` | Sample-to-bytes layout for the MD5 | md5 |
 | `error.rs` | `FlacError` and its messages | nothing |
@@ -144,6 +147,38 @@ choice is a pure function of the input, encoding the same samples twice produces
 byte-identical output. The streams it writes are read back by the reference
 `flac` decoder, not only by this crate.
 
+## Ogg encapsulation
+
+FLAC travels in two containers. The native `.flac` stream is the bytes described
+above. The Ogg form (`.oga`) carries the same FLAC data inside the generic Ogg
+container, cut into "packets" and grouped into "pages", each page checksummed.
+
+```
+  .oga:  [OggS page][OggS page]...    each page wraps one or more packets
+            packet 0: FLAC mapping header (carries STREAMINFO)
+            packet 1: VORBIS_COMMENT (and any other metadata blocks)
+            packet 2..: one FLAC audio frame each
+```
+
+The crate handles this as a thin layer around the existing codec, because the
+FLAC data inside an Ogg packet is byte-for-byte the same as in a native stream:
+
+- **Decode and `info`** detect the container from the first four bytes (`OggS`
+  versus `fLaC`). For Ogg, `ogg.rs` walks the pages, verifies each page's
+  CRC-32, reassembles the packets, and concatenates them back into a native
+  FLAC byte stream, which then goes through the ordinary decode path. The
+  reassembly is one-to-one (Ogg adds no compression), so it cannot expand the
+  input. `info` stops after the header packets.
+- **Encode** is the reverse: `encode_ogg` builds the same STREAMINFO and frames
+  the native encoder produces, wraps STREAMINFO in the FLAC-to-Ogg mapping
+  header packet, adds a minimal VORBIS_COMMENT (players expect a comment header,
+  as Vorbis and Opus carry one), and pages the packets up with the granule
+  positions and checksums Ogg requires. A fixed stream serial keeps the output
+  byte-stable.
+
+This means the Ogg layer reuses the whole FLAC decoder and the MD5 self-check
+unchanged; only the page framing is new.
+
 ## The lossless guarantee, and how it is checked
 
 FLAC stores an MD5 of the original samples in STREAMINFO. The strongest possible
@@ -209,8 +244,12 @@ The test suite is layered to match the test pyramid:
   encoder (bit depths 8 to 24, one to eight channels, rates to 192 kHz, streams
   with padding, seek tables, comments, and pictures), and re-encode their
   samples.
+- **Ogg tests** (`tests/ogg.rs`) decode a real `flac --ogg` fixture bit-exact
+  and round-trip the crate's own `encode_ogg` across bit depths, channel counts,
+  and stream lengths that span many pages.
 - **Adversarial tests** throw millions of random and bit-flipped bytes at the
-  decoder and assert it never panics.
+  decoder, including Ogg-marked and truncated/bit-flipped `.oga` input, and
+  assert it never panics.
 - **Security regression tests** (`tests/security.rs`) pin the resource-cap and
   crash-safety guarantees with hand-crafted hostile streams.
 

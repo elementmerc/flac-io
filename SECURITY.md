@@ -67,6 +67,13 @@ Validation happens where untrusted data enters, then internal code is trusted:
    each range-checked. Orders that exceed the block size, partition counts that
    do not divide the block, and reserved coding methods are rejected.
 4. **Whole frame.** The frame's CRC-16 is checked after the samples are decoded.
+5. **Ogg pages (for `.oga` input).** Before any FLAC parsing, the Ogg demuxer
+   reads the container. Every page field (segment table, body length, offsets)
+   is bounds-checked with overflow-safe arithmetic, and every page's CRC-32 is
+   verified against the page contents, so a damaged or truncated page is
+   rejected rather than read out of bounds. Packets are reassembled from page
+   bodies one-to-one, so an Ogg file cannot expand into more FLAC data than it
+   contains. The rebuilt FLAC stream then goes through boundaries 1 to 4 above.
 
 ## Known limitations
 
@@ -82,8 +89,8 @@ Validation happens where untrusted data enters, then internal code is trusted:
 
 ## What is out of scope
 
-- Ogg-encapsulated FLAC is not parsed; only the native FLAC stream format is
-  read.
 - The crate does not execute, follow, or act on any metadata it skips (comments,
   pictures, application blocks). It reads their lengths to step over them and
   nothing more.
+- For Ogg input, only the FLAC logical stream is read. Other multiplexed streams
+  (for example a video track) are stepped over by serial number, not decoded.

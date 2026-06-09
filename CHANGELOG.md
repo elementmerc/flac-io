@@ -17,6 +17,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Full 32-bit decoding, including streams that use an inter-channel side
   transform. The decoder carries samples internally at 64-bit width so the
   33-bit side channel of a 32-bit stream decodes bit-exactly.
+- Ogg-wrapped FLAC (`.oga`) support in both directions. `decode` and `info`
+  detect the container automatically (native `fLaC` or Ogg `OggS`); `encode_ogg`
+  writes an Ogg stream. Output is accepted by the reference `flac` and `ffmpeg`
+  decoders and round-trips bit-exactly.
 
 ### Security
 
