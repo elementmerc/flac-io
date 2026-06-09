@@ -38,6 +38,27 @@ pub fn crc16(data: &[u8]) -> u16 {
     crc
 }
 
+/// CRC-32 with polynomial 0x04C11DB7, used on Ogg pages.
+///
+/// This is the Ogg framing checksum, computed most-significant-bit-first with no
+/// input or output reflection and a zero initial value, which makes it a
+/// different CRC from the reflected CRC-32 used by zip and PNG. It is taken over
+/// a whole Ogg page with the checksum field itself zeroed.
+pub fn ogg_crc32(data: &[u8]) -> u32 {
+    let mut crc: u32 = 0;
+    for &byte in data {
+        crc ^= (byte as u32) << 24;
+        for _ in 0..8 {
+            crc = if crc & 0x8000_0000 != 0 {
+                (crc << 1) ^ 0x04c1_1db7
+            } else {
+                crc << 1
+            };
+        }
+    }
+    crc
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -64,5 +85,14 @@ mod tests {
     fn crc16_known_vector() {
         assert_eq!(crc16(&[0x00]), 0x0000);
         assert_eq!(crc16(&[0x01]), 0x8005);
+    }
+
+    #[test]
+    fn ogg_crc32_known_vectors() {
+        // The standard check string for this CRC variant (poly 0x04C11DB7,
+        // init 0, no reflection, no final xor). Cross-checked against a real
+        // libFLAC-produced Ogg page in the Ogg integration tests.
+        assert_eq!(ogg_crc32(b""), 0x0000_0000);
+        assert_eq!(ogg_crc32(b"123456789"), 0x89a1_897f);
     }
 }

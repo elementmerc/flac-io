@@ -12,8 +12,9 @@ the reference `flac` tool. They contain no third-party content.
 
 ## Real-world music fixtures
 
-`realmusic_24_96.flac`, `realmusic_16_44.flac`, and `realmusic_32_96.flac` are
-short clips (about 0.3 seconds) cut from a recording in the public domain:
+`realmusic_24_96.flac`, `realmusic_16_44.flac`, `realmusic_32_96.flac`, and
+`realmusic_16_44.oga` are short clips (about 0.3 seconds) cut from a recording in
+the public domain:
 
 - Work: J.S. Bach, Goldberg Variations, BWV 988 (Variatio 4)
 - Performer: Kimiko Ishizaka (piano)
@@ -45,3 +46,10 @@ wider sample depth. To regenerate it:
 
 At least one frame in the result uses the `MID_SIDE` assignment with zero wasted
 bits, which is the case the fixture exists to cover.
+
+### How `realmusic_16_44.oga` was made
+
+The same public-domain recording, encoded by the reference tool into the Ogg
+container instead of native FLAC, as a fixture for decoding Ogg-wrapped FLAC:
+`flac --ogg`. The audio is identical to `realmusic_16_44.flac`; only the
+container differs.

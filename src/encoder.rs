@@ -12,6 +12,7 @@ use crate::bitwriter::BitWriter;
 use crate::crc::{crc16, crc8};
 use crate::error::FlacError;
 use crate::metadata::FLAC_MARKER;
+use crate::ogg;
 use crate::sample_bytes::md5_of_samples;
 use crate::FlacAudio;
 
@@ -36,14 +37,21 @@ pub fn encode(audio: &FlacAudio) -> Result<Vec<u8>, FlacError> {
 
     let mut out = Vec::new();
     out.extend_from_slice(FLAC_MARKER);
-    write_streaminfo(&mut out, audio, total);
+    out.extend_from_slice(&streaminfo_block(audio, total, true));
 
     // Encode frame by frame over fixed-size blocks.
     let mut frame_number: u64 = 0;
     let mut start = 0;
     while start < total {
         let block = (total - start).min(BLOCK_SIZE);
-        write_frame(&mut out, audio, channels, bps, start, block, frame_number);
+        out.extend_from_slice(&frame_bytes(
+            audio,
+            channels,
+            bps,
+            start,
+            block,
+            frame_number,
+        ));
         start += block;
         frame_number += 1;
     }
@@ -51,6 +59,62 @@ pub fn encode(audio: &FlacAudio) -> Result<Vec<u8>, FlacError> {
     // A stream with zero samples still needs a valid (empty) frame section;
     // STREAMINFO alone is a legal FLAC stream, so nothing more is required.
     Ok(out)
+}
+
+/// Encode samples into a FLAC stream wrapped in the Ogg container (`.oga`).
+///
+/// The audio is encoded exactly as [`encode`] does; the only difference is the
+/// envelope. The STREAMINFO becomes the FLAC-to-Ogg mapping header packet, each
+/// audio frame becomes one Ogg packet, and the packets are paged up with the
+/// granule positions and checksums Ogg requires.
+pub fn encode_ogg(audio: &FlacAudio) -> Result<Vec<u8>, FlacError> {
+    validate(audio)?;
+
+    let channels = audio.channels as usize;
+    let bps = audio.bits_per_sample as u32;
+    let total = audio.samples_per_channel();
+
+    // First packet: the mapping header (type byte, "FLAC", version 1.0, then a
+    // 16-bit count of the header packets that follow it), then the native
+    // `fLaC` signature and the STREAMINFO block (no longer the last metadata
+    // block, since a VORBIS_COMMENT follows). One header packet follows: the
+    // comment block. Players that wrap FLAC in Ogg expect a comment header the
+    // way Vorbis and Opus streams carry one.
+    let mut header = Vec::new();
+    header.push(0x7F);
+    header.extend_from_slice(b"FLAC");
+    header.extend_from_slice(&[1, 0]); // mapping version 1.0
+    header.extend_from_slice(&1u16.to_be_bytes()); // one following header packet
+    header.extend_from_slice(FLAC_MARKER);
+    header.extend_from_slice(&streaminfo_block(audio, total, false));
+
+    let mut packets = vec![
+        ogg::Packet {
+            data: header,
+            granule: 0,
+        },
+        ogg::Packet {
+            data: vorbis_comment_block(),
+            granule: 0,
+        },
+    ];
+
+    let mut frame_number: u64 = 0;
+    let mut start = 0;
+    let mut cumulative: i64 = 0;
+    while start < total {
+        let block = (total - start).min(BLOCK_SIZE);
+        let data = frame_bytes(audio, channels, bps, start, block, frame_number);
+        cumulative += block as i64;
+        packets.push(ogg::Packet {
+            data,
+            granule: cumulative,
+        });
+        start += block;
+        frame_number += 1;
+    }
+
+    Ok(ogg::mux(&packets))
 }
 
 fn validate(audio: &FlacAudio) -> Result<(), FlacError> {
@@ -111,7 +175,11 @@ fn signed_range(bits: u32) -> (i64, i64) {
     (lo, hi)
 }
 
-fn write_streaminfo(out: &mut Vec<u8>, audio: &FlacAudio, total: usize) {
+/// Build the STREAMINFO metadata block (its 4-byte header plus 34-byte body,
+/// with the sample MD5 included). `last` sets the last-metadata-block flag:
+/// true for native FLAC, where STREAMINFO is the only block; false for Ogg,
+/// where a comment block follows. Shared by the native and Ogg encoders.
+fn streaminfo_block(audio: &FlacAudio, total: usize, last: bool) -> Vec<u8> {
     let mut w = BitWriter::new();
     // The block-size bounds describe the inter-frame block size. A stream whose
     // whole length is a single short frame reports that frame's size; otherwise
@@ -135,22 +203,45 @@ fn write_streaminfo(out: &mut Vec<u8>, audio: &FlacAudio, total: usize) {
 
     let md5 = md5_of_samples(&audio.samples, audio.bits_per_sample);
 
-    // Metadata block header: last-block flag set, type 0 (STREAMINFO), length 34.
-    out.push(0x80);
-    out.extend_from_slice(&[0x00, 0x00, 0x22]);
-    out.extend_from_slice(&body);
-    out.extend_from_slice(&md5);
+    // Metadata block header: last-block flag, type 0 (STREAMINFO), length 34.
+    let mut block = Vec::with_capacity(38);
+    block.push(if last { 0x80 } else { 0x00 });
+    block.extend_from_slice(&[0x00, 0x00, 0x22]);
+    block.extend_from_slice(&body);
+    block.extend_from_slice(&md5);
+    block
 }
 
-fn write_frame(
-    out: &mut Vec<u8>,
+/// Build a minimal VORBIS_COMMENT metadata block: a fixed vendor string and no
+/// user comments, as the last metadata block. Ogg-wrapped FLAC carries a
+/// comment header for players that expect one; the vendor string is a fixed
+/// literal so the output stays byte-stable across crate versions.
+fn vorbis_comment_block() -> Vec<u8> {
+    const VENDOR: &[u8] = b"flac-io";
+    // Vorbis comment bodies use little-endian lengths (the Vorbis convention),
+    // unlike the big-endian fields elsewhere in FLAC metadata.
+    let mut body = Vec::new();
+    body.extend_from_slice(&(VENDOR.len() as u32).to_le_bytes());
+    body.extend_from_slice(VENDOR);
+    body.extend_from_slice(&0u32.to_le_bytes()); // user comment count
+    let len = body.len() as u32;
+
+    let mut block = Vec::with_capacity(4 + body.len());
+    // Header: last-block flag set, type 4 (VORBIS_COMMENT), 24-bit length.
+    block.push(0x84);
+    block.extend_from_slice(&[(len >> 16) as u8, (len >> 8) as u8, len as u8]);
+    block.extend_from_slice(&body);
+    block
+}
+
+fn frame_bytes(
     audio: &FlacAudio,
     channels: usize,
     bps: u32,
     start: usize,
     block: usize,
     frame_number: u64,
-) {
+) -> Vec<u8> {
     let mut w = BitWriter::new();
 
     // Frame header. Fixed blocking strategy; explicit 16-bit block size; sample
@@ -182,7 +273,7 @@ fn write_frame(
     let frame = w.bytes().to_vec();
     w.write_bits(crc16(&frame) as u64, 16);
 
-    out.extend_from_slice(&w.into_bytes());
+    w.into_bytes()
 }
 
 /// FLAC's extended-UTF-8 coding of the frame number (here always small enough

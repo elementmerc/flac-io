@@ -70,3 +70,35 @@ fn bit_flipped_real_streams_never_panic() {
         }
     }
 }
+
+#[test]
+fn random_bytes_with_ogg_marker_never_panic() {
+    // Prefixing the OggS capture pattern drives the parser into the Ogg page
+    // demuxer with otherwise random bytes.
+    let mut rng = Lcg(0x0551_5055_1505_5105);
+    for _ in 0..3000 {
+        let len = (rng.next_u32() % 512) as usize;
+        let mut data = b"OggS".to_vec();
+        data.extend((0..len).map(|_| rng.next_u32() as u8));
+        let _ = flac_io::decode(&data);
+        let _ = flac_io::info(&data);
+    }
+}
+
+#[test]
+fn truncated_and_bit_flipped_ogg_never_panics() {
+    let full = fixture("realmusic_16_44.oga");
+    // Every prefix length, including the empty stream.
+    for cut in 0..full.len() {
+        let _ = flac_io::decode(&full[..cut]);
+        let _ = flac_io::info(&full[..cut]);
+    }
+    // Single-bit flips across the whole file.
+    let mut rng = Lcg(0x0cca_10cc_a10c_ca10);
+    for _ in 0..5000 {
+        let mut data = full.clone();
+        let pos = (rng.next_u32() as usize) % data.len();
+        data[pos] ^= 1 << (rng.next_u32() % 8);
+        let _ = flac_io::decode(&data);
+    }
+}

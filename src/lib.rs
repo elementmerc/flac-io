@@ -40,6 +40,7 @@ mod error;
 mod frame;
 mod md5;
 mod metadata;
+mod ogg;
 mod sample_bytes;
 
 pub use error::FlacError;
@@ -70,9 +71,9 @@ impl FlacAudio {
 /// Read just the stream metadata (sample rate, channels, bit depth, total
 /// samples, MD5) without decoding any audio.
 ///
-/// This parses only the `fLaC` marker and the metadata blocks, so it is cheap
-/// even for a large file. Use it when you need the format of a stream but not
-/// its samples.
+/// The container is detected automatically: both native FLAC and Ogg-wrapped
+/// FLAC are accepted. Only the metadata is read, so this stays cheap even for a
+/// large file. Use it when you need the format of a stream but not its samples.
 ///
 /// # Errors
 ///
@@ -80,12 +81,22 @@ impl FlacAudio {
 /// block is corrupt, or it declares a channel count or bit depth this crate
 /// cannot decode (so `info` and [`decode`] agree on which streams are valid).
 pub fn info(bytes: &[u8]) -> Result<StreamInfo, FlacError> {
-    let header = metadata::read_header(bytes)?;
+    let native;
+    let header = if ogg::is_ogg(bytes) {
+        native = ogg::to_native_flac(bytes, true)?;
+        metadata::read_header(&native)?
+    } else {
+        metadata::read_header(bytes)?
+    };
     decoder::validate_stream_info(&header.stream_info)?;
     Ok(header.stream_info)
 }
 
 /// Decode a FLAC byte stream into its samples and parameters.
+///
+/// The container is detected automatically: both native FLAC (the `.flac` form,
+/// starting with `fLaC`) and Ogg-wrapped FLAC (the `.oga` form, starting with
+/// `OggS`) are accepted.
 ///
 /// Decoding is bounded: a crafted stream cannot make this function allocate
 /// without limit. The total number of decoded samples (summed across channels)
@@ -102,7 +113,7 @@ pub fn decode(bytes: &[u8]) -> Result<FlacAudio, FlacError> {
     decoder::decode(bytes)
 }
 
-/// Encode samples into a valid FLAC byte stream.
+/// Encode samples into a valid native FLAC byte stream (the `.flac` form).
 ///
 /// # Errors
 ///
@@ -111,4 +122,18 @@ pub fn decode(bytes: &[u8]) -> Result<FlacAudio, FlacError> {
 /// samples.
 pub fn encode(audio: &FlacAudio) -> Result<Vec<u8>, FlacError> {
     encoder::encode(audio)
+}
+
+/// Encode samples into a FLAC stream wrapped in the Ogg container (the `.oga`
+/// form).
+///
+/// The audio is encoded identically to [`encode`]; only the container differs.
+/// Reading is symmetric: [`decode`] auto-detects either container, so there is
+/// no separate Ogg decode function.
+///
+/// # Errors
+///
+/// Returns [`FlacError::InvalidInput`] under the same conditions as [`encode`].
+pub fn encode_ogg(audio: &FlacAudio) -> Result<Vec<u8>, FlacError> {
+    encoder::encode_ogg(audio)
 }

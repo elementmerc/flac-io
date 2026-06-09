@@ -39,6 +39,16 @@ pub(crate) fn validate_stream_info(info: &StreamInfo) -> Result<(), FlacError> {
 }
 
 pub fn decode(bytes: &[u8]) -> Result<FlacAudio, FlacError> {
+    // Ogg-wrapped FLAC is demuxed back into a native FLAC stream first, then
+    // decoded by the same path; the container is the only difference.
+    if crate::ogg::is_ogg(bytes) {
+        let native = crate::ogg::to_native_flac(bytes, false)?;
+        return decode_native(&native);
+    }
+    decode_native(bytes)
+}
+
+fn decode_native(bytes: &[u8]) -> Result<FlacAudio, FlacError> {
     let header = read_header(bytes)?;
     let info = header.stream_info;
 
