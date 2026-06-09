@@ -144,3 +144,36 @@ fn rich_and_minimal_metadata_both_parse() {
         assert_eq!(a.channels, 2, "{name}");
     }
 }
+
+#[test]
+fn diverse_public_domain_recordings_round_trip_both_containers() {
+    // Two further real public-domain recordings beyond the Goldberg: a
+    // different piano performance and a live jazz ensemble. The ensemble in
+    // particular leans on mid/side frames more than solo piano, so these widen
+    // the real-world decode coverage. Each decodes bit-exact (MD5 self-check)
+    // and round-trips through both the native and the Ogg encoder.
+    for (name, bps, rate) in [
+        ("wtc_piano_24_96.flac", 24u8, 96000u32),
+        ("jazz_24_48.flac", 24, 48000),
+    ] {
+        let bytes = std::fs::read(fixtures_dir().join(name)).unwrap();
+        let a = flac_io::decode(&bytes).unwrap_or_else(|e| panic!("decode {name}: {e}"));
+        assert_eq!(a.bits_per_sample, bps, "{name}");
+        assert_eq!(a.channels, 2, "{name}");
+        assert_eq!(a.sample_rate, rate, "{name}");
+        assert!(a.samples_per_channel() > 0, "{name}");
+
+        let native = flac_io::encode(&a).expect("native encode");
+        assert_eq!(
+            flac_io::decode(&native).unwrap().samples,
+            a.samples,
+            "native {name}"
+        );
+        let ogg = flac_io::encode_ogg(&a).expect("ogg encode");
+        assert_eq!(
+            flac_io::decode(&ogg).unwrap().samples,
+            a.samples,
+            "ogg {name}"
+        );
+    }
+}

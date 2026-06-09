@@ -27,6 +27,29 @@ Under CC0 the recording carries no copyright or related rights, so these clips
 and any re-encoding of them may be redistributed without restriction. The
 attribution here is a courtesy, not a licence requirement.
 
+`wtc_piano_24_96.flac` is a short clip (about 0.3 seconds) from another
+public-domain recording, kept for decode variety from a different performance
+and repertoire than the Goldberg Variations:
+
+- Work: J.S. Bach, The Well-Tempered Clavier, Book 1, Prelude No. 15 in G major,
+  BWV 860
+- Performer: Kimiko Ishizaka (piano)
+- Rights: Public Domain Mark 1.0
+- Source: https://archive.org/details/bach-well-tempered-clavier-book-1
+
+`jazz_24_48.flac` is a short clip (about 0.3 seconds) from a public-domain live
+jazz recording, kept because an ensemble of several instruments exercises
+different decode decisions (more mid/side frames) than solo piano:
+
+- Work: Racer Sessions, Christian Pincock (Seattle, 2016-02-14), "01 Intro"
+- Rights: Public Domain Mark 1.0
+- Source: https://archive.org/details/RacerSessions-ChristianPincock02142016
+
+Both are marked as public domain, so the clips and any re-encoding may be
+redistributed without restriction. Each was made by decoding a 0.3-second
+segment of the source with the reference `flac` decoder (preserving its 24-bit
+depth) and re-encoding it with the reference encoder's default settings.
+
 ### How `realmusic_32_96.flac` was made
 
 This clip is the genuine recording stored at 32 bits per sample, kept as a
