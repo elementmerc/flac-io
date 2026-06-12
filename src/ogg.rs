@@ -44,7 +44,7 @@ const MAPPING_PREFIX_LEN: usize = 9;
 const ENCODER_SERIAL: u32 = 0x664C_4143; // "fLAC" as bytes, purely a label
 
 /// True when the bytes look like an Ogg stream (used to choose the decode path).
-pub fn is_ogg(bytes: &[u8]) -> bool {
+pub(crate) fn is_ogg(bytes: &[u8]) -> bool {
     bytes.len() >= 4 && &bytes[0..4] == OGG_MAGIC
 }
 
@@ -53,7 +53,7 @@ pub fn is_ogg(bytes: &[u8]) -> bool {
 /// With `headers_only` the rebuild stops once every metadata block has been
 /// recovered, so `info` does not have to demux a whole file. The returned bytes
 /// are a valid native FLAC stream that the ordinary decoder can read.
-pub fn to_native_flac(bytes: &[u8], headers_only: bool) -> Result<Vec<u8>, FlacError> {
+pub(crate) fn to_native_flac(bytes: &[u8], headers_only: bool) -> Result<Vec<u8>, FlacError> {
     let mut pos = 0usize;
     let mut serial: Option<u32> = None;
     let mut partial: Vec<u8> = Vec::new();
@@ -207,7 +207,7 @@ fn rebuild(packets: &[Vec<u8>], keep: Option<usize>) -> Result<Vec<u8>, FlacErro
 
 /// One packet to be paged, with the granule (running sample count) that holds
 /// once its data has been decoded. Metadata packets carry granule 0.
-pub struct Packet {
+pub(crate) struct Packet {
     pub data: Vec<u8>,
     pub granule: i64,
 }
@@ -218,7 +218,7 @@ pub struct Packet {
 /// page, as the mapping requires; the rest are packed densely, up to 255
 /// segments per page. The single logical stream is stamped with a fixed serial
 /// so the output is byte-stable.
-pub fn mux(packets: &[Packet]) -> Vec<u8> {
+pub(crate) fn mux(packets: &[Packet]) -> Vec<u8> {
     // One lacing segment per (up to) 255 bytes of packet data. The segment that
     // terminates a packet carries that packet's granule; a 255-valued segment
     // means the packet spills onto the next page. `body` is every packet's data

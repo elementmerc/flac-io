@@ -12,7 +12,7 @@ use crate::bitstream::BitReader;
 use crate::error::FlacError;
 
 /// The four-byte FLAC stream marker.
-pub const FLAC_MARKER: &[u8; 4] = b"fLaC";
+pub(crate) const FLAC_MARKER: &[u8; 4] = b"fLaC";
 
 /// The fixed length of a STREAMINFO block body.
 const STREAMINFO_LEN: usize = 34;
@@ -36,14 +36,14 @@ pub struct StreamInfo {
 /// Result of reading the stream header: the STREAMINFO and the byte offset at
 /// which the first audio frame begins.
 #[derive(Debug)]
-pub struct Header {
+pub(crate) struct Header {
     pub stream_info: StreamInfo,
     pub frame_start: usize,
 }
 
 /// Parse the `fLaC` marker and the metadata block chain, returning STREAMINFO
 /// and the offset of the first frame.
-pub fn read_header(bytes: &[u8]) -> Result<Header, FlacError> {
+pub(crate) fn read_header(bytes: &[u8]) -> Result<Header, FlacError> {
     if bytes.len() < 4 || &bytes[0..4] != FLAC_MARKER {
         return Err(FlacError::NotFlac);
     }

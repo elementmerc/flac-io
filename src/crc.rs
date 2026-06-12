@@ -6,7 +6,7 @@
 // most-significant-bit-first CRCs with no reflection and a zero initial value.
 
 /// CRC-8 with polynomial x^8 + x^2 + x^1 + x^0 (0x07), used on frame headers.
-pub fn crc8(data: &[u8]) -> u8 {
+pub(crate) fn crc8(data: &[u8]) -> u8 {
     let mut crc: u8 = 0;
     for &byte in data {
         crc ^= byte;
@@ -23,7 +23,7 @@ pub fn crc8(data: &[u8]) -> u8 {
 
 /// CRC-16 with polynomial x^16 + x^15 + x^2 + x^0 (0x8005), used on whole
 /// frames.
-pub fn crc16(data: &[u8]) -> u16 {
+pub(crate) fn crc16(data: &[u8]) -> u16 {
     let mut crc: u16 = 0;
     for &byte in data {
         crc ^= (byte as u16) << 8;
@@ -44,7 +44,7 @@ pub fn crc16(data: &[u8]) -> u16 {
 /// input or output reflection and a zero initial value, which makes it a
 /// different CRC from the reflected CRC-32 used by zip and PNG. It is taken over
 /// a whole Ogg page with the checksum field itself zeroed.
-pub fn ogg_crc32(data: &[u8]) -> u32 {
+pub(crate) fn ogg_crc32(data: &[u8]) -> u32 {
     let mut crc: u32 = 0;
     for &byte in data {
         crc ^= (byte as u32) << 24;

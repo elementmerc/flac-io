@@ -7,7 +7,7 @@
 // byte aligned the buffer is exactly the bytes emitted so far, which lets the
 // caller run a CRC over any range it has written.
 
-pub struct BitWriter {
+pub(crate) struct BitWriter {
     out: Vec<u8>,
     /// Bits accumulated for the byte currently being filled, left aligned.
     current: u8,
@@ -16,7 +16,7 @@ pub struct BitWriter {
 }
 
 impl BitWriter {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         BitWriter {
             out: Vec::new(),
             current: 0,
@@ -25,17 +25,17 @@ impl BitWriter {
     }
 
     /// True when no partial byte is pending.
-    pub fn is_byte_aligned(&self) -> bool {
+    pub(crate) fn is_byte_aligned(&self) -> bool {
         self.used == 0
     }
 
     /// Borrow the emitted bytes.
-    pub fn bytes(&self) -> &[u8] {
+    pub(crate) fn bytes(&self) -> &[u8] {
         &self.out
     }
 
     /// Write the low `n` bits of `value`, most significant first.
-    pub fn write_bits(&mut self, value: u64, n: u32) {
+    pub(crate) fn write_bits(&mut self, value: u64, n: u32) {
         debug_assert!(n <= 64);
         let mut remaining = n;
         while remaining > 0 {
@@ -57,7 +57,7 @@ impl BitWriter {
     }
 
     /// Write a unary code: `q` zero bits followed by a single one bit.
-    pub fn write_unary(&mut self, q: u64) {
+    pub(crate) fn write_unary(&mut self, q: u64) {
         let mut left = q;
         while left >= 8 {
             self.write_bits(0, 8);
@@ -68,7 +68,7 @@ impl BitWriter {
     }
 
     /// Pad with zero bits up to the next byte boundary.
-    pub fn align_to_byte(&mut self) {
+    pub(crate) fn align_to_byte(&mut self) {
         if self.used != 0 {
             self.out.push(self.current);
             self.current = 0;
@@ -77,7 +77,7 @@ impl BitWriter {
     }
 
     /// Finish writing and return the buffer. Pads a trailing partial byte.
-    pub fn into_bytes(mut self) -> Vec<u8> {
+    pub(crate) fn into_bytes(mut self) -> Vec<u8> {
         self.align_to_byte();
         self.out
     }

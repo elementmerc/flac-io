@@ -10,14 +10,14 @@ use crate::md5::Md5;
 
 /// Bytes used per sample for a given bit depth: the depth rounded up to whole
 /// bytes.
-pub fn bytes_per_sample(bits_per_sample: u8) -> usize {
+pub(crate) fn bytes_per_sample(bits_per_sample: u8) -> usize {
     (bits_per_sample as usize).div_ceil(8)
 }
 
 /// Compute the FLAC sample MD5 over interleaved channel samples.
 ///
 /// `samples[channel][index]`; every channel vector has the same length.
-pub fn md5_of_samples(samples: &[Vec<i32>], bits_per_sample: u8) -> [u8; 16] {
+pub(crate) fn md5_of_samples(samples: &[Vec<i32>], bits_per_sample: u8) -> [u8; 16] {
     let bps_bytes = bytes_per_sample(bits_per_sample);
     let frames = samples.first().map_or(0, |c| c.len());
     let mut hasher = Md5::new();

@@ -24,7 +24,7 @@ const K: [u32; 64] = [
 ];
 
 /// Streaming MD5 hasher.
-pub struct Md5 {
+pub(crate) struct Md5 {
     state: [u32; 4],
     /// Bytes hashed so far (for the length padding).
     length: u64,
@@ -34,7 +34,7 @@ pub struct Md5 {
 }
 
 impl Md5 {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Md5 {
             state: [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476],
             length: 0,
@@ -43,7 +43,7 @@ impl Md5 {
         }
     }
 
-    pub fn update(&mut self, mut data: &[u8]) {
+    pub(crate) fn update(&mut self, mut data: &[u8]) {
         self.length = self.length.wrapping_add(data.len() as u64);
         // Top up an existing partial block first.
         if self.buffer_len > 0 {
@@ -70,7 +70,7 @@ impl Md5 {
         }
     }
 
-    pub fn finalize(mut self) -> [u8; 16] {
+    pub(crate) fn finalize(mut self) -> [u8; 16] {
         let bit_len = self.length.wrapping_mul(8);
         // Append the 0x80 terminator then zero-pad to 56 mod 64.
         self.update(&[0x80]);
@@ -138,7 +138,7 @@ impl Default for Md5 {
 
 /// One-shot convenience digest.
 #[cfg(test)]
-pub fn digest(data: &[u8]) -> [u8; 16] {
+pub(crate) fn digest(data: &[u8]) -> [u8; 16] {
     let mut h = Md5::new();
     h.update(data);
     h.finalize()

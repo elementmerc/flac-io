@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![warn(unreachable_pub)]
 //! A pure-Rust FLAC decoder and encoder with no unsafe code and no C
 //! dependency.
 //!

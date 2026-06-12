@@ -43,7 +43,7 @@ struct FrameHeader {
 ///
 /// `out` must already have one vector per channel. Returns the number of
 /// samples per channel that this frame contributed.
-pub fn decode_frame(
+pub(crate) fn decode_frame(
     reader: &mut BitReader,
     stream_info: &StreamInfo,
     out: &mut [Vec<i32>],

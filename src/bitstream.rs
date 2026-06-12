@@ -13,7 +13,7 @@ use crate::error::FlacError;
 /// this many; a longer run means the input is corrupt or adversarial.
 const MAX_UNARY_BITS: u32 = 1 << 20;
 
-pub struct BitReader<'a> {
+pub(crate) struct BitReader<'a> {
     data: &'a [u8],
     /// Index of the next byte to draw bits from.
     byte_pos: usize,
@@ -22,7 +22,7 @@ pub struct BitReader<'a> {
 }
 
 impl<'a> BitReader<'a> {
-    pub fn new(data: &'a [u8]) -> Self {
+    pub(crate) fn new(data: &'a [u8]) -> Self {
         BitReader {
             data,
             byte_pos: 0,
@@ -31,27 +31,27 @@ impl<'a> BitReader<'a> {
     }
 
     /// Total bits not yet consumed.
-    pub fn bits_left(&self) -> usize {
+    pub(crate) fn bits_left(&self) -> usize {
         (self.data.len() - self.byte_pos) * 8 - self.bit_pos as usize
     }
 
     /// True when the cursor sits on a byte boundary.
-    pub fn is_byte_aligned(&self) -> bool {
+    pub(crate) fn is_byte_aligned(&self) -> bool {
         self.bit_pos == 0
     }
 
     /// Index of the next unread byte. Only meaningful when byte aligned.
-    pub fn byte_position(&self) -> usize {
+    pub(crate) fn byte_position(&self) -> usize {
         self.byte_pos
     }
 
     /// Borrow the underlying bytes (for CRC over a consumed range).
-    pub fn data(&self) -> &'a [u8] {
+    pub(crate) fn data(&self) -> &'a [u8] {
         self.data
     }
 
     /// Read `n` bits (0 to 32) most-significant first into a u32.
-    pub fn read_u32(&mut self, n: u32) -> Result<u32, FlacError> {
+    pub(crate) fn read_u32(&mut self, n: u32) -> Result<u32, FlacError> {
         debug_assert!(n <= 32);
         if n == 0 {
             return Ok(0);
@@ -81,7 +81,7 @@ impl<'a> BitReader<'a> {
     }
 
     /// Read `n` bits (0 to 64) most-significant first into a u64.
-    pub fn read_u64(&mut self, n: u32) -> Result<u64, FlacError> {
+    pub(crate) fn read_u64(&mut self, n: u32) -> Result<u64, FlacError> {
         debug_assert!(n <= 64);
         if n <= 32 {
             return Ok(self.read_u32(n)? as u64);
@@ -92,7 +92,7 @@ impl<'a> BitReader<'a> {
     }
 
     /// Read `n` bits as a two's-complement signed value, sign-extended.
-    pub fn read_signed(&mut self, n: u32) -> Result<i32, FlacError> {
+    pub(crate) fn read_signed(&mut self, n: u32) -> Result<i32, FlacError> {
         debug_assert!((1..=32).contains(&n));
         let raw = self.read_u32(n)?;
         if n == 32 {
@@ -116,7 +116,7 @@ impl<'a> BitReader<'a> {
     /// point each channel's values fit 32 bits again.
     ///
     /// [`read_signed`]: BitReader::read_signed
-    pub fn read_signed_wide(&mut self, n: u32) -> Result<i64, FlacError> {
+    pub(crate) fn read_signed_wide(&mut self, n: u32) -> Result<i64, FlacError> {
         debug_assert!((1..=33).contains(&n));
         let raw = self.read_u64(n)?;
         let sign_bit = 1u64 << (n - 1);
@@ -130,7 +130,7 @@ impl<'a> BitReader<'a> {
 
     /// Read a unary-coded value: the number of zero bits before the first one
     /// bit. The terminating one bit is consumed.
-    pub fn read_unary(&mut self) -> Result<u32, FlacError> {
+    pub(crate) fn read_unary(&mut self) -> Result<u32, FlacError> {
         let mut count: u32 = 0;
         loop {
             if self.bits_left() == 0 {
@@ -150,7 +150,7 @@ impl<'a> BitReader<'a> {
     }
 
     /// Advance to the next byte boundary, discarding any partial bits.
-    pub fn align_to_byte(&mut self) {
+    pub(crate) fn align_to_byte(&mut self) {
         if self.bit_pos != 0 {
             self.bit_pos = 0;
             self.byte_pos += 1;

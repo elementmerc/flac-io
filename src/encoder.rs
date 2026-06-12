@@ -28,7 +28,7 @@ const MAX_RICE_PARAM: u32 = 30;
 /// residuals are pathological and we use a verbatim subframe instead.
 const MAX_RICE_QUOTIENT: u64 = 1 << 20;
 
-pub fn encode(audio: &FlacAudio) -> Result<Vec<u8>, FlacError> {
+pub(crate) fn encode(audio: &FlacAudio) -> Result<Vec<u8>, FlacError> {
     validate(audio)?;
 
     let channels = audio.channels as usize;
@@ -67,7 +67,7 @@ pub fn encode(audio: &FlacAudio) -> Result<Vec<u8>, FlacError> {
 /// envelope. The STREAMINFO becomes the FLAC-to-Ogg mapping header packet, each
 /// audio frame becomes one Ogg packet, and the packets are paged up with the
 /// granule positions and checksums Ogg requires.
-pub fn encode_ogg(audio: &FlacAudio) -> Result<Vec<u8>, FlacError> {
+pub(crate) fn encode_ogg(audio: &FlacAudio) -> Result<Vec<u8>, FlacError> {
     validate(audio)?;
 
     let channels = audio.channels as usize;
