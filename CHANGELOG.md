@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-06-12 — Sound of Music Hotfix
+
+### Changed
+
+- Tightened internal visibility: items used only across modules (the bit
+  reader and writer, the CRC and MD5 helpers, the frame and Ogg routines) are
+  now `pub(crate)` instead of `pub`. The public API is unchanged, it was always
+  exactly `decode`, `encode`, `encode_ogg`, `info`, `FlacAudio`, `StreamInfo`,
+  and `FlacError`; these internals were never reachable from outside the crate.
+  The `unreachable_pub` lint now keeps the boundary honest.
+
+### Other
+
+- Bug fixes and improvements.
+
 ## [0.1.0] - 2026-06-09 — The Sound of Music
 
 ### Added
